@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Sube cada skill de anthropic-skills.json a la API de Anthropic.
+# Sube todas las skills de skills/*/SKILL.md a la API de Anthropic.
+# anthropic-skills.json es solo el registro de ids (skill -> skill_id):
+# - Skill sin id (nueva en el repo): se crea y se anota su skill_id.
+# - Skill con id y cambios en el push: se sube una version nueva del mismo id.
 # Requiere: curl, jq, ANTHROPIC_API_KEY.
 set -euo pipefail
 
@@ -9,14 +12,14 @@ HDR=(-H "x-api-key: ${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY secret is missing}"
      -H "anthropic-version: 2023-06-01"
      -H "anthropic-beta: skills-2025-10-02")
 
-if [[ ! -f "$MAP" ]]; then echo "::error::$MAP not found"; exit 1; fi
+[[ -f "$MAP" ]] || echo '{}' > "$MAP"
 
 changed_in_push() {
   # True if the skill folder changed in the pushed commit(s).
   local dir="$1"
   if [[ "${FORCE_ALL:-false}" == "true" ]]; then return 0; fi
   if ! git rev-parse HEAD~1 >/dev/null 2>&1; then return 0; fi
-  ! git diff --quiet HEAD~1 HEAD -- "$dir" "$MAP"
+  ! git diff --quiet HEAD~1 HEAD -- "$dir"
 }
 
 upload() {
@@ -32,13 +35,11 @@ upload() {
   echo "$resp"
 }
 
-summary=""
-for name in $(jq -r 'keys[]' "$MAP"); do
+created=0; updated=0; skipped=0; summary=""
+# Discover every skill in the repo, not only the ones already in the json.
+for skillmd in skills/*/SKILL.md; do
+  name=$(basename "$(dirname "$skillmd")")
   dir="skills/$name"
-  if [[ ! -f "$dir/SKILL.md" ]]; then
-    echo "::warning::$dir/SKILL.md not found, skipping"
-    continue
-  fi
   id=$(jq -r --arg k "$name" '.[$k] // ""' "$MAP")
 
   if [[ -z "$id" ]]; then
@@ -47,20 +48,26 @@ for name in $(jq -r 'keys[]' "$MAP"); do
     id=$(echo "$resp" | jq -r '.id // empty')
     if [[ -z "$id" ]]; then echo "::error::Create failed for $name: $resp"; exit 1; fi
     tmp=$(mktemp); jq --arg k "$name" --arg v "$id" '.[$k]=$v' "$MAP" > "$tmp" && mv "$tmp" "$MAP"
-    summary+="- $name: CREATED -> $id"$'\n'
+    summary+="- $name: CREATED -> $id"$'\n'; created=$((created+1))
   elif changed_in_push "$dir"; then
     echo "Uploading new version of '$name' ($id)..."
     resp=$(upload "$API/$id/versions" "$name")
     ver=$(echo "$resp" | jq -r '.version // empty')
     if [[ -z "$ver" ]]; then echo "::error::Version upload failed for $name: $resp"; exit 1; fi
-    summary+="- $name: new version $ver ($id)"$'\n'
+    summary+="- $name: new version $ver ($id)"$'\n'; updated=$((updated+1))
   else
-    summary+="- $name: unchanged, skipped ($id)"$'\n'
+    skipped=$((skipped+1))
   fi
 done
 
-echo "## Anthropic skills sync" >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
-echo "$summary" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
-echo
-echo "Skill ids for /admin/agent -> Skill ids:"
-jq -r 'to_entries[] | select(.value != "") | "\(.key): \(.value)"' "$MAP"
+# Skills that disappeared from the repo keep their id in the json (nothing is deleted in the API).
+for name in $(jq -r 'keys[]' "$MAP"); do
+  [[ -f "skills/$name/SKILL.md" ]] || summary+="- $name: no longer in the repo (kept in the API)"$'\n'
+done
+
+{
+  echo "## Anthropic skills sync"
+  echo "Created: $created, updated: $updated, unchanged: $skipped"
+  echo
+  echo "$summary"
+} | tee -a "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
