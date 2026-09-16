@@ -87,17 +87,18 @@ jobs:
         run: |
           if [[ -z "$RESEND_API_KEY" ]]; then echo "::error::RESEND_API_KEY secret not set, cannot send email."; exit 1; fi
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          today=$(TZ=Europe/Madrid date +%Y-%m-%d)
+          today=$(TZ=Europe/Madrid date +%d/%m/%Y)
           if [[ "$CHANGED" == "conflict" ]]; then
-            subject="Skills repo: merge conflict, manual action needed"
-            body="<p>The weekly sync of <b>${{ github.repository }}</b> with the original repo hit a merge conflict and was aborted. Nothing changed.</p><p>Conflicting files:</p><pre>$(cat /tmp/conflicts.txt)</pre><p><a href=\"$run_url\">Open the run</a></p>"
+            subject="Skills: conflicto al sincronizar, hace falta revisarlo a mano"
+            body="<p>La sincronizacion semanal de <b>${{ github.repository }}</b> con el repo original ha encontrado un conflicto y se ha cancelado. No se ha cambiado nada.</p><p>Archivos en conflicto:</p><pre>$(cat /tmp/conflicts.txt)</pre><p><a href=\"$run_url\">Ver la ejecucion</a></p>"
           elif [[ "$CHANGED" == "true" ]]; then
             skills=$(sed 's/^/- /' /tmp/changed-skills.txt)
-            subject="Skills repo updated ($today): $(wc -l < /tmp/changed-skills.txt | tr -d ' ') skills changed"
-            body="<p>The repo <b>${{ github.repository }}</b> was synced with the original repo. The changed skills are being uploaded to the Anthropic API now; the BeDigitaly agent will use the new versions on its next run.</p><p><b>Skills changed:</b></p><pre>${skills:-none}</pre><p><b>Upstream commits:</b></p><pre>$(cat /tmp/upstream-commits.txt)</pre><p><a href=\"$run_url\">Open the run</a> | <a href=\"${{ github.server_url }}/${{ github.repository }}/actions\">Actions</a></p>"
+            n=$(wc -l < /tmp/changed-skills.txt | tr -d ' ')
+            subject="Skills actualizadas ($today): $n skills con cambios"
+            body="<p>El repo <b>${{ github.repository }}</b> se ha sincronizado con el repo original. Las skills modificadas se estan subiendo ahora a la API de Anthropic; el agente del blog usara las versiones nuevas en su proxima ejecucion.</p><p><b>Skills con cambios:</b></p><pre>${skills:-ninguna}</pre><p><b>Commits del repo original:</b></p><pre>$(cat /tmp/upstream-commits.txt)</pre><p><a href=\"$run_url\">Ver la ejecucion</a> | <a href=\"${{ github.server_url }}/${{ github.repository }}/actions\">Todas las ejecuciones</a></p>"
           else
-            subject="Skills repo checked ($today): no changes"
-            body="<p>Weekly check of <b>${{ github.repository }}</b>: the original repo has no new changes since the last sync. Nothing was uploaded to the Anthropic API; the agent keeps using the current skill versions.</p><p>Latest upstream commit: <code>$UPSTREAM_SHA</code> ($UPSTREAM_DATE).</p><p><a href=\"$run_url\">Open the run</a></p>"
+            subject="Skills revisadas ($today): sin cambios"
+            body="<p>Revision semanal de <b>${{ github.repository }}</b>: el repo original no tiene novedades desde la ultima sincronizacion. No se ha subido nada a la API de Anthropic; el agente sigue usando las versiones actuales de las skills.</p><p>Ultimo commit del repo original: <code>$UPSTREAM_SHA</code> ($UPSTREAM_DATE).</p><p><a href=\"$run_url\">Ver la ejecucion</a></p>"
           fi
           jq -n --arg from "$NOTIFY_FROM" --arg to "$NOTIFY_TO" --arg subject "$subject" --arg html "$body" \
             '{from:$from, to:[$to], reply_to:$to, subject:$subject, html:$html}' \
